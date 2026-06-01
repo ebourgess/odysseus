@@ -11,6 +11,16 @@ COMMAND_LOG=""
 usage() {
   cat <<'USAGE'
 Usage: scripts/install-quadlets.sh [--generate-only] [--output-dir DIR] [--env-file FILE] [--command-log FILE]
+
+Options:
+  --generate-only   Generate Quadlet files and exit.
+  --output-dir DIR  Write generated Quadlet files to DIR.
+  --env-file FILE   Read generation-time KEY=VALUE inputs from FILE.
+                   Generated odysseus.container still uses the runtime
+                   EnvironmentFile at the repository .env.
+  --command-log FILE
+                   Parsed for future active install support; unused until
+                   active install mode is implemented.
 USAGE
 }
 
@@ -46,11 +56,35 @@ done
 
 load_env_file() {
   local env_file="${ENV_FILE:-$REPO_ROOT/.env}"
+  local line key value first last
+
   [ -f "$env_file" ] || return 0
-  set -a
-  # shellcheck disable=SC1090
-  . "$env_file"
-  set +a
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+    line="${line#"${line%%[![:space:]]*}"}"
+    if [[ "$line" =~ ^export[[:space:]]+(.+)$ ]]; then
+      line="${BASH_REMATCH[1]}"
+    fi
+
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+
+    if [ "${#value}" -ge 2 ]; then
+      first="${value:0:1}"
+      last="${value: -1}"
+      if { [ "$first" = "'" ] && [ "$last" = "'" ]; } || { [ "$first" = '"' ] && [ "$last" = '"' ]; }; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+
+    export "$key=$value"
+  done < "$env_file"
 }
 
 write_file() {
@@ -226,7 +260,7 @@ main() {
     exit 0
   fi
 
-  echo "Active install mode will be implemented in a later task." >&2
+  echo "Active install mode is not implemented yet; use --generate-only for now." >&2
   exit 1
 }
 
