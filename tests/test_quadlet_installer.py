@@ -6,7 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "install-quadlets.sh"
 
 
-def run_installer(tmp_path, *args, env=None):
+def run_installer(tmp_path, *args, env_file_content=None, env=None):
     output_dir = tmp_path / "quadlets"
     home = tmp_path / "home"
     home.mkdir()
@@ -17,6 +17,10 @@ def run_installer(tmp_path, *args, env=None):
         str(output_dir),
         *args,
     ]
+    if env_file_content is not None:
+        env_file = tmp_path / "app.env"
+        env_file.write_text(env_file_content)
+        command.extend(["--env-file", str(env_file)])
     merged_env = {
         "HOME": str(home),
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -55,11 +59,11 @@ def test_generates_isolated_network_and_attaches_every_container(tmp_path):
 def test_resolves_default_ports_and_env_overrides(tmp_path):
     output_dir = run_installer(
         tmp_path,
-        env={
-            "APP_PORT": "7500",
-            "CHROMADB_BIND": "0.0.0.0",
-            "NTFY_BIND": "0.0.0.0",
-        },
+        env_file_content=(
+            "APP_PORT=7500\n"
+            "CHROMADB_BIND=0.0.0.0\n"
+            "NTFY_BIND=0.0.0.0\n"
+        ),
     )
 
     assert "PublishPort=7500:7000" in read(output_dir, "odysseus.container")

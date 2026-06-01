@@ -23,10 +23,17 @@ The script supports these arguments:
 ```bash
 scripts/install-quadlets.sh
 scripts/install-quadlets.sh --generate-only --output-dir /tmp/quadlets
+scripts/install-quadlets.sh --generate-only --output-dir /tmp/quadlets --env-file /tmp/app.env
 scripts/install-quadlets.sh --command-log /tmp/commands.log --output-dir /tmp/quadlets
 ```
 
 `--generate-only` writes Quadlets and exits before command checks or service actions.
+
+`--env-file FILE` sources values from a caller-provided env file for generation.
+The generated Odysseus Quadlet still uses `EnvironmentFile=<repo>/.env` because
+that is the runtime env file for the installed stack. This option exists so
+tests and automation can resolve generated ports without mutating the repo's
+real `.env`.
 
 `--command-log FILE` writes the install commands that would run, instead of executing `systemctl`, and is used by tests.
 
@@ -41,7 +48,6 @@ scripts/install-quadlets.sh --command-log /tmp/commands.log --output-dir /tmp/qu
 Create `tests/test_quadlet_installer.py`:
 
 ```python
-import os
 import subprocess
 from pathlib import Path
 
@@ -50,10 +56,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "install-quadlets.sh"
 
 
-def run_installer(tmp_path, *args, env=None):
+def run_installer(tmp_path, *args, env_file_content=None, env=None):
     output_dir = tmp_path / "quadlets"
-    command = [str(SCRIPT), "--generate-only", "--output-dir", str(output_dir), *args]
-    merged_env = os.environ.copy()
+    home = tmp_path / "home"
+    home.mkdir()
+    command = [
+        str(SCRIPT),
+        "--generate-only",
+        "--output-dir",
+        str(output_dir),
+        *args,
+    ]
+    if env_file_content is not None:
+        env_file = tmp_path / "app.env"
+        env_file.write_text(env_file_content)
+        command.extend(["--env-file", str(env_file)])
+    merged_env = {
+        "HOME": str(home),
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    }
     if env:
         merged_env.update(env)
     result = subprocess.run(
@@ -86,20 +107,14 @@ def test_generates_isolated_network_and_attaches_every_container(tmp_path):
 
 
 def test_resolves_default_ports_and_env_overrides(tmp_path):
-    env_file = REPO_ROOT / ".env"
-    original = env_file.read_text() if env_file.exists() else None
-    try:
-        env_file.write_text(
+    output_dir = run_installer(
+        tmp_path,
+        env_file_content=(
             "APP_PORT=7500\n"
             "CHROMADB_BIND=0.0.0.0\n"
             "NTFY_BIND=0.0.0.0\n"
-        )
-        output_dir = run_installer(tmp_path)
-    finally:
-        if original is None:
-            env_file.unlink(missing_ok=True)
-        else:
-            env_file.write_text(original)
+        ),
+    )
 
     assert "PublishPort=7500:7000" in read(output_dir, "odysseus.container")
     assert "PublishPort=0.0.0.0:8100:8000" in read(output_dir, "chromadb.container")
@@ -175,6 +190,10 @@ while [ "$#" -gt 0 ]; do
       OUTPUT_DIR="${2:?missing value for --output-dir}"
       shift 2
       ;;
+    --env-file)
+      ENV_FILE="${2:?missing value for --env-file}"
+      shift 2
+      ;;
     --command-log)
       COMMAND_LOG="${2:?missing value for --command-log}"
       shift 2
@@ -192,7 +211,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 load_env_file() {
-  local env_file="$REPO_ROOT/.env"
+  local env_file="${ENV_FILE:-$REPO_ROOT/.env}"
   [ -f "$env_file" ] || return 0
   set -a
   # shellcheck disable=SC1090
