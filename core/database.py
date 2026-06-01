@@ -326,6 +326,11 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # Explicit provider override. NULL = auto-detect from URL, "openai" = force
+    # OpenAI chat/completions format, "anthropic" = force Anthropic messages format.
+    # Needed for multi-protocol endpoints like OpenCode Zen/Go that serve both
+    # OpenAI-compatible and Anthropic-compatible models from the same domain.
+    provider = Column(String, nullable=True, default=None)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
@@ -822,6 +827,26 @@ def _migrate_add_supports_tools_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"supports_tools migration failed: {e}")
+
+
+def _migrate_add_provider_column():
+    """Add provider column to model_endpoints for explicit API format override
+    (needed for multi-protocol endpoints like OpenCode Zen/Go)."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "provider" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN provider TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'provider' column to model_endpoints")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"provider migration failed: {e}")
 
 
 def _migrate_add_cached_models_column():
@@ -1496,6 +1521,7 @@ def init_db():
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_supports_tools_column()
+    _migrate_add_provider_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
