@@ -111,6 +111,77 @@ def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
     assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
 
 
+# ── secure-by-default deployment + integration storage ─────────
+
+def test_docker_compose_binds_web_ui_to_loopback_by_default():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000" in compose
+    assert '"${APP_PORT:-7000}:7000"' not in compose
+
+
+def test_readme_native_quickstart_uses_loopback():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
+    assert "Use `--host 0.0.0.0` only when you intentionally want" in readme
+
+
+def _import_integrations(tmp_path, monkeypatch):
+    """Import src.integrations with data + encryption key redirected to tmp."""
+    _import_secret_storage(tmp_path, monkeypatch)
+    sys.modules.pop("src.integrations", None)
+    from src import integrations  # noqa: WPS433
+    monkeypatch.setattr(integrations, "DATA_FILE", str(tmp_path / "integrations.json"))
+    return integrations
+
+
+def test_integrations_api_keys_are_encrypted_at_rest(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+
+    integrations.save_integrations([
+        {
+            "id": "miniflux",
+            "name": "Miniflux",
+            "base_url": "https://rss.example",
+            "auth_type": "bearer",
+            "api_key": "secret-token",
+        }
+    ])
+
+    raw_text = (tmp_path / "integrations.json").read_text(encoding="utf-8")
+    raw = json.loads(raw_text)
+    assert raw[0]["api_key"].startswith("enc:")
+    assert "secret-token" not in raw_text
+
+    loaded = integrations.load_integrations()
+    assert loaded[0]["api_key"] == "secret-token"
+    assert integrations.mask_integration_secret(loaded[0])["api_key"] == "secr****"
+
+
+def test_integrations_plaintext_keys_migrate_on_load(tmp_path, monkeypatch):
+    integrations = _import_integrations(tmp_path, monkeypatch)
+    data_file = tmp_path / "integrations.json"
+    data_file.write_text(
+        json.dumps([
+            {
+                "id": "legacy",
+                "name": "Legacy API",
+                "base_url": "https://api.example",
+                "auth_type": "header",
+                "api_key": "legacy-secret",
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    loaded = integrations.load_integrations()
+
+    assert loaded[0]["api_key"] == "legacy-secret"
+    migrated_text = data_file.read_text(encoding="utf-8")
+    migrated = json.loads(migrated_text)
+    assert migrated[0]["api_key"].startswith("enc:")
+    assert "legacy-secret" not in migrated_text
+
+
 # ── _q IMAP mailbox quoter ─────────────────────────────────────
 
 def _import_q():
@@ -622,3 +693,71 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
     with _pytest.raises(httpx.RequestError) as exc:
         content._get_public_url("http://public.example/start", headers={}, timeout=5)
     assert "non-public" in str(exc.value)
+
+
+# ── audit fixes (2026-06-01): email XSS, attachment traversal, authz ──
+
+def _import_attachment_extract_dir():
+    sys.modules.pop("routes.email_helpers", None)
+    from routes.email_helpers import attachment_extract_dir, ATTACHMENTS_DIR
+    return attachment_extract_dir, ATTACHMENTS_DIR
+
+
+@pytest.mark.parametrize("folder,uid", [
+    ("../../../../tmp/evil", "1"),
+    ("INBOX", "../../etc/cron.d/x"),
+    ("a/../../b", "x"),
+    ("..", ".."),
+    ("/abs/path", "2"),
+])
+def test_attachment_extract_dir_stays_contained(folder, uid):
+    """User-controlled folder/uid must never escape ATTACHMENTS_DIR — pins the
+    fix for the attachment-extraction path traversal."""
+    aed, base = _import_attachment_extract_dir()
+    target = aed(folder, uid)
+    base_r = base.resolve()
+    assert target == base_r or base_r in target.parents
+    # exactly one extra path segment, and no `..` component survived
+    rel = target.relative_to(base_r)
+    assert ".." not in rel.parts
+
+
+def test_attachment_extract_dir_normal_inputs_unchanged():
+    aed, base = _import_attachment_extract_dir()
+    assert aed("INBOX", "123") == base.resolve() / "INBOX_123"
+
+
+def test_diagnostics_routes_are_admin_gated():
+    """db/rag stats + test endpoints must require admin (they relied only on
+    the global session check before)."""
+    src = Path(__file__).resolve().parents[1] / "routes" / "diagnostics_routes.py"
+    text = src.read_text()
+    for handler in ("get_database_stats", "get_rag_stats", "test_youtube", "test_research"):
+        assert f"def {handler}(request: Request" in text, handler
+    assert text.count("require_admin(request)") >= 4
+
+
+def test_email_thread_rendering_sanitizes_body_html():
+    """Both threaded render paths must run server-parsed body_html through the
+    allowlist sanitizer (the flat path already did)."""
+    src = Path(__file__).resolve().parents[1] / "static" / "js" / "emailLibrary.js"
+    text = src.read_text()
+    # every `t.body_html` reference is wrapped by _sanitizeHtml(...)
+    assert text.count("t.body_html") == text.count("_sanitizeHtml(t.body_html")
+    assert "t.body_html" in text  # guard against the file being refactored away
+
+
+def test_session_html_export_escapes_name():
+    src = Path(__file__).resolve().parents[1] / "routes" / "session_routes.py"
+    text = src.read_text()
+    assert "safe_title = html.escape(session.name" in text
+    assert "<title>{session.name}" not in text
+    assert "<h1>{session.name}</h1>" not in text
+
+
+def test_mcp_oauth_page_escapes_reflected_values():
+    src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
+    text = src.read_text()
+    body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
+    for var in ("auth_url", "server_id", "host"):
+        assert f"{var} = html.escape({var}" in body, var
