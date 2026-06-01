@@ -44,7 +44,7 @@ export function hasUnclosedThinkTag(text) {
 }
 
 export function startsWithReasoningPrefix(text) {
-  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
+  return /^\s*(?:thinking(?:\s+process)?\s*[:.\-–—]?|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
 }
 
 function normalizePlainThinking(text) {
@@ -56,12 +56,12 @@ function normalizePlainThinking(text) {
   const replyStarts = [
     'Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK',
     'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome',
-    'Good ', "I'm happy", "I'd be"
+    'Good ', "I'm happy", "I'd be", 'Loud', 'Testing,', 'Check,'
   ];
-  const prefixRegex = /^(thinking(?:\s+process)?\s*:)\s*/i;
+  const prefixRegex = /^(thinking(?:\s+process)?\s*[:.\-–—]?)\s*/i;
   const escapedReplyStarts = replyStarts.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const boundaryRegex = new RegExp(
-    `^([\\s\\S]*?)(\\n\\n(?=${escapedReplyStarts.join('|')}|I |What|Let|This |As ))[\\s\\S]*$`,
+    `^([\\s\\S]*)(\\n\\n(?=${escapedReplyStarts.join('|')}|I |What|Let|This |As ))[\\s\\S]*$`,
     'i'
   );
   const boundaryMatch = boundaryRegex.exec(trimmed);

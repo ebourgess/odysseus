@@ -495,10 +495,10 @@ def _normalize_thinking(text: str) -> str:
     if not text:
         return text
     reasoning_prefix_re = re.compile(
-        r'^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )',
+        r'^\s*(?:thinking(?:\s+process)?\s*[:.\-–—]?|the user |i need |i should |i will |they are |the question |i can )',
         re.IGNORECASE,
     )
-    thinking_prefix_re = re.compile(r'^thinking(?:\s+process)?\s*:\s*', re.IGNORECASE)
+    thinking_prefix_re = re.compile(r'^thinking(?:\s+process)?\s*[:.\-–—]?\s*', re.IGNORECASE)
 
     # Handle garbled <think> tags: reasoning text followed by <think> as separator
     # e.g. "The user said...I should respond.\n<think>Hey! What's up?"
@@ -528,7 +528,7 @@ def _normalize_thinking(text: str) -> str:
     if thinking_prefix_re.match(text.lstrip()):
         # Try clean boundary first
         m = re.match(
-            r'^(Thinking(?:\s+Process)?:[\s\S]*?)(\n\n(?=[A-Z]|Hey|Yo|Hi|Sure|I |What|Here|Let|The |This |OK|Ok|Yes|No |So |Well |Thank|Alright|Of course|Absolutely|Great|Hello|As ))',
+            r'^(Thinking(?:\s+Process)?\s*[:.\-–—]?[\s\S]*)(\n\n(?=Hey|Yo|Hi|Sure|I |What|Here|Let|The |This |OK|Ok|Yes|No |So |Well |Thank|Alright|Of course|Absolutely|Great|Hello|As |Loud|Testing,|Check,))',
             text, re.IGNORECASE | re.MULTILINE
         )
         if m:
@@ -564,6 +564,7 @@ def _normalize_thinking(text: str) -> str:
         'Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK',
         'Here', 'Absolutely', 'Of course', 'Great', 'Alright',
         'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be",
+        'Loud', 'Testing,', 'Check,',
     )
     if any(first_line.startswith(p) for p in reasoning_starts):
         # Try line-by-line split first
