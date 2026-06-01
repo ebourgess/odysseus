@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_DIR="${HOME}/.config/containers/systemd/odysseus"
+OUTPUT_DIR="/etc/containers/systemd/odysseus"
 GENERATE_ONLY=0
 ENV_FILE=""
 COMMAND_LOG=""
@@ -257,9 +257,9 @@ WantedBy=default.target
 EOF
 }
 
-refuse_root_for_active_install() {
-  if [ "$(id -u)" -eq 0 ]; then
-    echo "Refusing to run active rootless install as root." >&2
+require_root_for_active_install() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Active system-wide install requires root. Re-run with sudo." >&2
     exit 1
   fi
 }
@@ -273,7 +273,7 @@ require_command() {
 }
 
 active_install_preflight() {
-  refuse_root_for_active_install
+  require_root_for_active_install
   require_command podman
   require_command systemctl
 }
@@ -295,10 +295,10 @@ run_cmd() {
 
 active_install() {
   prepare_command_log
-  run_cmd systemctl --user daemon-reload
-  run_cmd systemctl --user start odysseus-img-build.service
-  run_cmd systemctl --user restart chromadb.service searxng.service ntfy.service
-  run_cmd systemctl --user restart odysseus.service
+  run_cmd systemctl daemon-reload
+  run_cmd systemctl start odysseus-img-build.service
+  run_cmd systemctl restart chromadb.service searxng.service ntfy.service
+  run_cmd systemctl restart odysseus.service
 }
 
 print_success() {
@@ -306,7 +306,7 @@ print_success() {
 Installed Quadlets in $OUTPUT_DIR
 
 Verify with:
-  systemctl --user status chromadb.service searxng.service ntfy.service odysseus.service
+  systemctl status chromadb.service searxng.service ntfy.service odysseus.service
   podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
   curl -fsS http://localhost:${APP_PORT:-7000}/api/health
 EOF
