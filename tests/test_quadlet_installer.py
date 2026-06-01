@@ -92,3 +92,36 @@ def test_searxng_preserves_compose_initialization_entrypoint(tmp_path):
     assert "odysseus-local-searxng-json-2026-05-30" in content
     assert "__SEARXNG_SECRET__" in content
     assert "/tmp/searxng-settings.yml.template" in content
+
+
+def test_active_install_logs_reload_build_and_start_order(tmp_path):
+    output_dir = tmp_path / "quadlets"
+    command_log = tmp_path / "commands.log"
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--output-dir",
+            str(output_dir),
+            "--command-log",
+            str(command_log),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert command_log.read_text().splitlines() == [
+        "systemctl --user daemon-reload",
+        "systemctl --user start odysseus-img-build.service",
+        "systemctl --user restart chromadb.service searxng.service ntfy.service",
+        "systemctl --user restart odysseus.service",
+    ]
