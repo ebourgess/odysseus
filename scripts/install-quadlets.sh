@@ -19,8 +19,7 @@ Options:
                    Generated odysseus.container still uses the runtime
                    EnvironmentFile at the repository .env.
   --command-log FILE
-                   Parsed for future active install support; unused until
-                   active install mode is implemented.
+                   Write active install commands to FILE instead of executing.
 USAGE
 }
 
@@ -258,6 +257,61 @@ WantedBy=default.target
 EOF
 }
 
+refuse_root_for_active_install() {
+  if [ "$(id -u)" -eq 0 ]; then
+    echo "Refusing to run active rootless install as root." >&2
+    exit 1
+  fi
+}
+
+require_command() {
+  local command_name="$1"
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Required command not found: $command_name" >&2
+    exit 1
+  fi
+}
+
+prepare_command_log() {
+  [ -n "$COMMAND_LOG" ] || return 0
+  mkdir -p "$(dirname "$COMMAND_LOG")"
+  : > "$COMMAND_LOG"
+}
+
+run_cmd() {
+  if [ -n "$COMMAND_LOG" ]; then
+    printf '%s\n' "$*" >> "$COMMAND_LOG"
+    return 0
+  fi
+
+  "$@"
+}
+
+active_install() {
+  if [ -z "$COMMAND_LOG" ]; then
+    refuse_root_for_active_install
+    require_command podman
+    require_command systemctl
+  fi
+
+  prepare_command_log
+  run_cmd systemctl --user daemon-reload
+  run_cmd systemctl --user start odysseus-img-build.service
+  run_cmd systemctl --user restart chromadb.service searxng.service ntfy.service
+  run_cmd systemctl --user restart odysseus.service
+}
+
+print_success() {
+  cat <<EOF
+Installed Quadlets in $OUTPUT_DIR
+
+Verify with:
+  systemctl --user status odysseus.service
+  podman ps
+  journalctl --user -u odysseus.service -f
+EOF
+}
+
 main() {
   ensure_project_state
   generate_quadlets
@@ -267,8 +321,8 @@ main() {
     exit 0
   fi
 
-  echo "Active install mode is not implemented yet; use --generate-only for now." >&2
-  exit 1
+  active_install
+  print_success
 }
 
 main "$@"
