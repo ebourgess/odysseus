@@ -306,9 +306,9 @@ print_success() {
 Installed Quadlets in $OUTPUT_DIR
 
 Verify with:
-  systemctl --user status odysseus.service
-  podman ps
-  journalctl --user -u odysseus.service -f
+  systemctl --user status chromadb.service searxng.service ntfy.service odysseus.service
+  podman ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+  curl -fsS http://localhost:${APP_PORT:-7000}/api/health
 EOF
 }
 
