@@ -74,6 +74,13 @@ load_env_file() {
     value="${line#*=}"
 
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    case "$key" in
+      APP_PORT|CHROMADB_BIND|NTFY_BIND|NTFY_BASE_URL|SEARXNG_SECRET|PUID|PGID)
+        ;;
+      *)
+        continue
+        ;;
+    esac
 
     if [ "${#value}" -ge 2 ]; then
       first="${value:0:1}"
