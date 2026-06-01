@@ -1,7 +1,14 @@
+import json
+import subprocess
+import sys
+
 import pytest
 from fastapi import HTTPException
 
 from routes.cookbook_helpers import (
+    _cached_model_scan_script,
+    _append_serve_exit_code_lines,
+    _append_serve_preflight_exit_lines,
     _local_tooling_path_export,
     _safe_env_prefix,
     _validate_gpus,
@@ -58,3 +65,61 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
+
+
+def test_serve_preflight_failure_keeps_tmux_pane_visible():
+    """Dependency preflight failures should remain visible in tmux output.
+
+    A bare `exit 127` kills the tmux pane before the browser/status poller can
+    capture the helpful error, leaving users with a blank "crashed" card.
+    """
+    runner_lines = [
+        'ODYSSEUS_PREFLIGHT_EXIT=""',
+        'echo "ERROR: vLLM is not installed. Open Cookbook -> Dependencies and install vllm on this server, then launch again."',
+        'ODYSSEUS_PREFLIGHT_EXIT=127',
+    ]
+    _append_serve_preflight_exit_lines(runner_lines, keep_shell_open=True)
+    script = "\n".join(runner_lines)
+
+    assert "ERROR: vLLM is not installed" in script
+    assert 'ODYSSEUS_PREFLIGHT_EXIT=127' in script
+    assert 'echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="' in script
+    assert 'exec "${SHELL:-/bin/bash}"' in script
+    assert "exit 127" not in script
+
+
+def test_serve_runner_preserves_command_exit_code():
+    """The serve wrapper must capture `$?` before any echo resets it."""
+    runner_lines = ["vllm serve Qwen/Qwen3.6-35B-A3B-NVFP4 --host 0.0.0.0 --port 8000"]
+    _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
+    script = "\n".join(runner_lines)
+
+    assert "ODYSSEUS_CMD_EXIT=$?" in script
+    assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
+    assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
+    """Custom download dirs may sit inside the HF hub cache and contain plain
+    per-model folders. They must show up in Serve and keep the GGUF signal."""
+    plain = tmp_path / "Qwen3.6-27B"
+    plain.mkdir()
+    (plain / "Qwen3.6-27B-Q4_K_M.gguf").write_bytes(b"gguf")
+
+    hf_internal = tmp_path / "models--Qwen--Qwen3.6-27B"
+    (hf_internal / "snapshots" / "abc").mkdir(parents=True)
+    (hf_internal / "snapshots" / "abc" / "model.safetensors").write_bytes(b"safe")
+
+    scan_py = tmp_path / "scan_cache.py"
+    scan_py.write_text(_cached_model_scan_script([str(tmp_path)]), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    assert "models--Qwen--Qwen3.6-27B" not in by_repo
+    assert by_repo["Qwen3.6-27B"]["is_local_dir"] is True
+    assert by_repo["Qwen3.6-27B"]["is_gguf"] is True
