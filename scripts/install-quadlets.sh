@@ -272,6 +272,12 @@ require_command() {
   fi
 }
 
+active_install_preflight() {
+  refuse_root_for_active_install
+  require_command podman
+  require_command systemctl
+}
+
 prepare_command_log() {
   [ -n "$COMMAND_LOG" ] || return 0
   mkdir -p "$(dirname "$COMMAND_LOG")"
@@ -288,12 +294,6 @@ run_cmd() {
 }
 
 active_install() {
-  if [ -z "$COMMAND_LOG" ]; then
-    refuse_root_for_active_install
-    require_command podman
-    require_command systemctl
-  fi
-
   prepare_command_log
   run_cmd systemctl --user daemon-reload
   run_cmd systemctl --user start odysseus-img-build.service
@@ -313,6 +313,10 @@ EOF
 }
 
 main() {
+  if [ "$GENERATE_ONLY" -eq 0 ] && [ -z "$COMMAND_LOG" ]; then
+    active_install_preflight
+  fi
+
   ensure_project_state
   generate_quadlets
 
