@@ -5,6 +5,7 @@
  */
 
 import uiModule from './ui.js';
+import emojiShortcodes from './emojiShortcodes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -226,6 +227,9 @@ function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) 
 // the surrounding text color (project rule: never colorful emoji). Operates on
 // rendered HTML: only touches text outside tags and skips <code>/<pre>.
 const _EMOJI_RE = /\p{Extended_Pictographic}/u;
+const _EMOJI_SHORTCODE_TEST_RE = /:[a-z0-9_+-]+:/i;
+const _EMOJI_SHORTCODE_RE = /:([a-z0-9_+-]+):/gi;
+const _EMOJI_SHORTCODES = emojiShortcodes;
 const _emojiSeg = (typeof Intl !== 'undefined' && Intl.Segmenter)
   ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
 
@@ -245,12 +249,26 @@ function _emojiImg(emoji) {
   // supply the glyph it returns a transparent SVG, so the mask shows nothing.
   return `<span class="emoji" role="img" aria-label="${emoji}" style="--em:url('/api/emoji/${code}.svg')"></span>`;
 }
-function _svgifyText(text) {
+function _svgifyUnicodeText(text) {
   if (!_emojiSeg) return text;
   let out = '';
   for (const { segment } of _emojiSeg.segment(text)) {
     out += _EMOJI_RE.test(segment) ? _emojiImg(segment) : segment;
   }
+  return out;
+}
+function _svgifyText(text) {
+  let out = '';
+  let lastIndex = 0;
+  text.replace(_EMOJI_SHORTCODE_RE, (match, name, offset) => {
+    out += _svgifyUnicodeText(text.slice(lastIndex, offset));
+    const shortcode = String(name || '').toLowerCase();
+    const emoji = _EMOJI_SHORTCODES[shortcode] || _EMOJI_SHORTCODES[shortcode.replace(/-/g, '_')];
+    out += emoji ? _emojiImg(emoji) : match;
+    lastIndex = offset + match.length;
+    return match;
+  });
+  out += _svgifyUnicodeText(text.slice(lastIndex));
   return out;
 }
 /** When "Text-only Emojis" is on, keep Unicode in HTML so deEmojify() can strip them. */
@@ -259,7 +277,7 @@ function _useSvgEmoji() {
 }
 
 export function svgifyEmoji(html) {
-  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
+  if (!_useSvgEmoji() || !html || (!_EMOJI_RE.test(html) && !_EMOJI_SHORTCODE_TEST_RE.test(html))) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -269,7 +287,7 @@ export function svgifyEmoji(html) {
       else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
       continue;
     }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) parts[i] = _svgifyText(parts[i]);
+    if (codeDepth === 0 && (_EMOJI_RE.test(parts[i]) || _EMOJI_SHORTCODE_TEST_RE.test(parts[i]))) parts[i] = _svgifyText(parts[i]);
   }
   return parts.join('');
 }
